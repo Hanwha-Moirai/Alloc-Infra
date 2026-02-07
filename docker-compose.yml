@@ -41,7 +41,6 @@ services:
       discovery.type: single-node
       OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
       OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
-      # 로컬 통합 테스트
       plugins.security.disabled: "true"
     ulimits:
       memlock:
@@ -57,7 +56,6 @@ services:
       - opensearch_data:/usr/share/opensearch/data
     networks:
       - moirai
-    # 컨테이너 내부에서 9200 포트가 열렸는지만 체크
     healthcheck:
       test: ["CMD-SHELL", "bash -lc 'exec 3<>/dev/tcp/127.0.0.1/9200'"]
       interval: 10s
@@ -65,7 +63,7 @@ services:
       retries: 30
     restart: unless-stopped
 
-  moirai-auth:
+  moirai-auth-service:
     image: moirai-auth:latest
     environment:
       SPRING_PROFILES_ACTIVE: docker
@@ -73,17 +71,20 @@ services:
       SPRING_DATASOURCE_USERNAME: ${AUTH_DB_USER:-auth}
       SPRING_DATASOURCE_PASSWORD: ${AUTH_DB_PASSWORD}
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
+
       MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: always
       MANAGEMENT_ENDPOINT_HEALTH_SHOW_COMPONENTS: always
       MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
 
-      # 내부 DNS로 Redis 연결
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
 
       SPRING_MAIL_USERNAME: ${MAIL_USERNAME}
       SPRING_MAIL_PASSWORD: ${MAIL_PASSWORD}
-      ALLOC_INTERNAL_BASE_URL: http://moirai-alloc:8080
+
+      # auth -> alloc 내부 호출
+      ALLOC_INTERNAL_BASE_URL: http://moirai-core-service-dev:8080
+
       JWT_SECRET: ${JWT_SECRET}
       JWT_ACCESS_EXP: ${JWT_ACCESS_EXP:-1800}
       JWT_REFRESH_EXP: ${JWT_REFRESH_EXP:-1209600}
@@ -98,14 +99,15 @@ services:
       - moirai
     restart: unless-stopped
 
-  moirai-alloc:
+  moirai-core-service-dev:
     image: moirai-alloc:latest
     environment:
-      SPRING_PROFILES_ACTIVE: docker
+      SPRING_PROFILES_ACTIVE: prod
       SPRING_DATASOURCE_URL: ${ALLOC_DB_URL}
       SPRING_DATASOURCE_USERNAME: ${ALLOC_DB_USER:-alloc}
       SPRING_DATASOURCE_PASSWORD: ${ALLOC_DB_PASSWORD}
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
+
       MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: always
       MANAGEMENT_ENDPOINT_HEALTH_SHOW_COMPONENTS: always
       MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
@@ -115,13 +117,13 @@ services:
 
       SPRING_MAIL_USERNAME: ${MAIL_USERNAME}
       SPRING_MAIL_PASSWORD: ${MAIL_PASSWORD}
-      AUTH_SYNC_BASE_URL: http://moirai-auth:8082
 
-      # 내부 DNS로 OpenSearch 연결
+      # alloc -> auth sync
+      AUTH_SYNC_BASE_URL: http://moirai-auth-service:8082
+
       OPENSEARCH_HOST: opensearch
       OPENSEARCH_PORT: 9200
       OPENSEARCH_SCHEME: http
-
       OPENSEARCH_USERNAME: ${OPENSEARCH_USERNAME:-}
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:-}
 
@@ -135,7 +137,7 @@ services:
         condition: service_healthy
       opensearch:
         condition: service_healthy
-      moirai-auth:
+      moirai-auth-service:
         condition: service_started
     ports:
       - "18080:8080"
@@ -148,10 +150,14 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: docker
       JWT_SECRET: ${JWT_SECRET}
+
+      AUTH_URI: http://moirai-auth-service:8082
+      CORE_URI: http://moirai-core-service-dev:8080
+      AI_URI: http://moirai-rag-service:8000
     depends_on:
-      moirai-alloc:
+      moirai-core-service-dev:
         condition: service_started
-      moirai-auth:
+      moirai-auth-service:
         condition: service_started
     ports:
       - "18081:8081"
